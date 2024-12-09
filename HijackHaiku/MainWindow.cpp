@@ -89,29 +89,76 @@ MainWindow::MainWindow()
 }
 
 
-void
-MainWindow::_PerformSystemScan()
+void MainWindow::_PerformSystemScan()
 {
     BString results;
     results << "System Scan Results:\n\n";
 
-    // Check if the directory exists
-    BDirectory directory("/boot/home/config");
-    if (directory.InitCheck() == B_OK) {
-        results << "Files in /boot/home/config:\n";
+    // Check if the '/packages' directory exists
+    BDirectory packagesDirectory("/packages");
+    if (packagesDirectory.InitCheck() == B_OK) {
+        results << "Files in /packages:\n";
         BEntry entry;
-        while (directory.GetNextEntry(&entry) == B_OK) {
+        while (packagesDirectory.GetNextEntry(&entry) == B_OK) {
             BPath path;
             entry.GetPath(&path);
             results << "  - " << path.Path() << "\n";
         }
     } else {
+        results << "  (Directory '/packages' not found)\n";
+    }
+
+    // Check the '/boot/home/config' directory and look for "settings"
+    BDirectory configDirectory("/boot/home/config");
+    if (configDirectory.InitCheck() == B_OK) {
+        results << "\nFiles in /boot/home/config:\n";
+        BEntry entry;
+        bool settingsFound = false;
+        while (configDirectory.GetNextEntry(&entry) == B_OK) {
+            BPath path;
+            entry.GetPath(&path);
+
+            // Check if the directory ends with 'settings'
+            if (path.Leaf() == "settings") {
+                settingsFound = true;
+            }
+            results << "  - " << path.Path() << "\n";
+        }
+        if (!settingsFound) {
+            results << "  (Directory '/boot/home/config' does not contain 'settings')\n";
+        }
+    } else {
         results << "  (Directory '/boot/home/config' not found)\n";
     }
 
-    results << "\nInstalled Packages:\n";
+    // Check the '/boot/home/Desktop' directory and subdirectories for files without extensions
+    BDirectory desktopDirectory("/boot/home/Desktop");
+    if (desktopDirectory.InitCheck() == B_OK) {
+        results << "\nApplications on Desktop without extensions:\n";
+        BEntry entry;
+        while (desktopDirectory.GetNextEntry(&entry) == B_OK) {
+            BPath path;
+            entry.GetPath(&path);
 
-    // Execute "pkgman list" to get the list of installed packages
+            // If it's a directory, we need to check subfolders as well
+            if (entry.IsDirectory()) {
+                // Recursively check the subfolders
+                _CheckDesktopSubfoldersForNoExtension(path.Path(), results);
+            } else {
+                // Check if the file does not have an extension
+                BString leafName = path.Leaf();
+                int32 dotPos = leafName.FindLast('.');
+                if (dotPos == B_ERROR) { // No dot found, so no extension
+                    results << "  - " << path.Path() << "\n";
+                }
+            }
+        }
+    } else {
+        results << "  (Directory '/boot/home/Desktop' not found)\n";
+    }
+
+    // Get installed packages via "pkgman list"
+    results << "\nInstalled Packages:\n";
     FILE* pkgmanOutput = popen("pkgman list", "r");
     if (pkgmanOutput) {
         char buffer[1024]; // Use a larger buffer for efficiency
@@ -125,11 +172,36 @@ MainWindow::_PerformSystemScan()
 
     results << "\nScan completed.\n";
 
-    // Update the BTextView
+    // Update the BTextView with the scan results
     fResultsView->SetText(results);
 
     // Save to a log file
     _SaveLogFile(results);
+}
+
+// Recursive function to check subfolders on the Desktop for files without extensions
+void MainWindow::_CheckDesktopSubfoldersForNoExtension(const char* folderPath, BString& results)
+{
+    BDirectory subDir(folderPath);
+    if (subDir.InitCheck() == B_OK) {
+        BEntry entry;
+        while (subDir.GetNextEntry(&entry) == B_OK) {
+            BPath path;
+            entry.GetPath(&path);
+
+            // If it's a directory, recurse deeper
+            if (entry.IsDirectory()) {
+                _CheckDesktopSubfoldersForNoExtension(path.Path(), results);
+            } else {
+                // Check if the file does not have an extension
+                BString leafName = path.Leaf();
+                int32 dotPos = leafName.FindLast('.');
+                if (dotPos == B_ERROR) { // No dot found, so no extension
+                    results << "  - " << path.Path() << "\n";
+                }
+            }
+        }
+    }
 }
 
 
