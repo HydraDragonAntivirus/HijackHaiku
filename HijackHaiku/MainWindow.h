@@ -29,6 +29,9 @@ private:
 			BMenuItem*		fSaveMenuItem;
 			BFilePanel*		fOpenPanel;
 			BFilePanel*		fSavePanel;
+            void _SaveLogFile(const BString& results);
+            void _PerformSystemScan();
+
 };
 
 #endif

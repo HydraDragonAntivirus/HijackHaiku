@@ -14,6 +14,13 @@
 #include <MenuBar.h>
 #include <Path.h>
 #include <View.h>
+#include <Button.h>
+#include <GroupLayout.h>
+#include <LayoutBuilder.h>
+#include <TextView.h>
+#include <ScrollView.h>    // Add this for BScrollView
+#include <Alert.h>         // Add this for BAlert
+#include <AppKit.h>        // Add this for app_info
 
 #include <cstdio>
 
@@ -26,32 +33,127 @@ static const uint32 kMsgSaveFile = 'fsav';
 
 static const char* kSettingsFile = "MyApplication_settings";
 
+// Add this member to MainWindow class
+BButton* fScanButton;
+
+// Add this member to MainWindow class
+BTextView* fResultsView;
+
 
 MainWindow::MainWindow()
-	:
-	BWindow(BRect(100, 100, 500, 400), B_TRANSLATE("My window"), B_TITLED_WINDOW,
-		B_ASYNCHRONOUS_CONTROLS | B_QUIT_ON_WINDOW_CLOSE)
+    :
+    BWindow(BRect(100, 100, 700, 500), B_TRANSLATE("HijackHaiku"), B_TITLED_WINDOW,
+        B_ASYNCHRONOUS_CONTROLS | B_QUIT_ON_WINDOW_CLOSE)
 {
-	BMenuBar* menuBar = _BuildMenu();
+    BMenuBar* menuBar = _BuildMenu();
 
-	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
-		.Add(menuBar)
-		.AddGlue()
-		.End();
+    fScanButton = new BButton("Start Scan", new BMessage('SCAN'));
 
-	BMessenger messenger(this);
-	fOpenPanel = new BFilePanel(B_OPEN_PANEL, &messenger, NULL, B_FILE_NODE, false);
-	fSavePanel = new BFilePanel(B_SAVE_PANEL, &messenger, NULL, B_FILE_NODE, false);
+    // Create the TextView and wrap it in a ScrollView
+    fResultsView = new BTextView("ResultsView");
+    fResultsView->SetStylable(true); // Enable text styling if needed
+    fResultsView->MakeEditable(false); // Make it read-only
+    fResultsView->SetText("Scan results will appear here...");
 
-	BMessage settings;
-	_LoadSettings(settings);
+    // Set a minimum size for the TextView
+    fResultsView->SetExplicitMinSize(BSize(400, 300)); // Minimum width and height
 
-	BRect frame;
-	if (settings.FindRect("main_window_rect", &frame) == B_OK) {
-		MoveTo(frame.LeftTop());
-		ResizeTo(frame.Width(), Bounds().Height());
-	}
-	MoveOnScreen();
+    // Wrap TextView in a BScrollView
+    BScrollView* resultsScrollView = new BScrollView(
+        "ResultsScrollView", fResultsView, B_WILL_DRAW | B_FRAME_EVENTS, false, true);
+
+    BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
+        .Add(menuBar)
+        .Add(fScanButton)
+        .AddStrut(10) // Add some spacing
+        .AddGroup(B_VERTICAL)
+            .SetInsets(10)
+            .Add(resultsScrollView) // Add the ScrollView
+        .End()
+        .AddGlue()
+        .End();
+
+    BMessenger messenger(this);
+    fOpenPanel = new BFilePanel(B_OPEN_PANEL, &messenger, NULL, B_FILE_NODE, false);
+    fSavePanel = new BFilePanel(B_SAVE_PANEL, &messenger, NULL, B_FILE_NODE, false);
+
+    BMessage settings;
+    _LoadSettings(settings);
+
+    BRect frame;
+    if (settings.FindRect("main_window_rect", &frame) == B_OK) {
+        MoveTo(frame.LeftTop());
+        ResizeTo(frame.Width(), Bounds().Height());
+    }
+    MoveOnScreen();
+}
+
+
+void
+MainWindow::_PerformSystemScan()
+{
+    BString results;
+    results << "System Scan Results:\n\n";
+
+    // Check if the directory exists
+    BDirectory directory("/boot/home/config");
+    if (directory.InitCheck() == B_OK) {
+        results << "Files in /boot/home/config:\n";
+        BEntry entry;
+        while (directory.GetNextEntry(&entry) == B_OK) {
+            BPath path;
+            entry.GetPath(&path);
+            results << "  - " << path.Path() << "\n";
+        }
+    } else {
+        results << "  (Directory '/boot/home/config' not found)\n";
+    }
+
+    results << "\nInstalled Packages:\n";
+
+    // Execute "pkgman list" to get the list of installed packages
+    FILE* pkgmanOutput = popen("pkgman list", "r");
+    if (pkgmanOutput) {
+        char buffer[1024]; // Use a larger buffer for efficiency
+        while (fgets(buffer, sizeof(buffer), pkgmanOutput)) {
+            results << buffer;
+        }
+        pclose(pkgmanOutput);
+    } else {
+        results << "  (Failed to retrieve installed packages)\n";
+    }
+
+    results << "\nScan completed.\n";
+
+    // Update the BTextView
+    fResultsView->SetText(results);
+
+    // Save to a log file
+    _SaveLogFile(results);
+}
+
+
+void
+MainWindow::_SaveLogFile(const BString& results)
+{
+    app_info appInfo;
+    if (be_app->GetAppInfo(&appInfo) == B_OK) {
+        BPath appPath(&appInfo.ref); // Path to the executable
+        appPath.GetParent(&appPath); // Get the directory of the executable
+        appPath.Append("scan_results.log"); // Append the log file name
+
+        BFile logFile(appPath.Path(), B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
+        if (logFile.InitCheck() == B_OK) {
+            logFile.Write(results.String(), results.Length());
+            printf("Log saved to: %s\n", appPath.Path());
+        } else {
+            BAlert* alert = new BAlert("Error", "Failed to save log file.", "OK");
+            alert->Go();
+        }
+    } else {
+        BAlert* alert = new BAlert("Error", "Failed to retrieve application info.", "OK");
+        alert->Go();
+    }
 }
 
 
@@ -67,54 +169,44 @@ MainWindow::~MainWindow()
 void
 MainWindow::MessageReceived(BMessage* message)
 {
-	switch (message->what) {
-		case B_SIMPLE_DATA:
-		case B_REFS_RECEIVED:
-		{
-			entry_ref ref;
-			if (message->FindRef("refs", &ref) != B_OK)
-				break;
+    switch (message->what) {
+        case B_SIMPLE_DATA:
+        case B_REFS_RECEIVED:
+        {
+            entry_ref ref;
+            if (message->FindRef("refs", &ref) != B_OK)
+                break;
 
-			fSaveMenuItem->SetEnabled(true);
-			printf("File opened/dropped\n");
-		} break;
+            fSaveMenuItem->SetEnabled(true);
+            printf("File opened/dropped\n");
+        } break;
 
-		case B_SAVE_REQUESTED:
-		{
-			entry_ref ref;
-			const char* name;
-			if (message->FindRef("directory", &ref) == B_OK
-				&& message->FindString("name", &name) == B_OK) {
-				BDirectory directory(&ref);
-				BEntry entry(&directory, name);
-				BPath path = BPath(&entry);
+        case B_SAVE_REQUESTED:
+        {
+            entry_ref ref;
+            const char* name;
+            if (message->FindRef("directory", &ref) == B_OK
+                && message->FindString("name", &name) == B_OK) {
+                BDirectory directory(&ref);
+                BEntry entry(&directory, name);
+                BPath path = BPath(&entry);
 
-				printf("Save path: %s\n", path.Path());
-			}
-		} break;
+                printf("Save path: %s\n", path.Path());
+            }
+        } break;
 
-		case kMsgNewFile:
-		{
-			fSaveMenuItem->SetEnabled(false);
-			printf("New\n");
-		} break;
+        case 'SCAN':
+        {
+            _PerformSystemScan();
+            break;
+        }
 
-		case kMsgOpenFile:
-		{
-			fOpenPanel->Show();
-		} break;
-
-		case kMsgSaveFile:
-		{
-			fSavePanel->Show();
-		} break;
-
-		default:
-		{
-			BWindow::MessageReceived(message);
-			break;
-		}
-	}
+        default:
+        {
+            BWindow::MessageReceived(message);
+            break;
+        }
+    }
 }
 
 
