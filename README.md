@@ -1,2 +1,2 @@
 # HijackHaiku
- Detect anormalies and create system report for Haiku
+- Detect anormalies and create system report for Haiku.
