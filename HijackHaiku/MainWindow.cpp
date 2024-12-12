@@ -94,7 +94,19 @@ void MainWindow::_PerformSystemScan()
     BString results;
     results << "System Scan Results:\n\n";
 
-    // Other scan components...
+    // Check if the '/packages' directory exists
+    BDirectory packagesDirectory("/packages");
+    if (packagesDirectory.InitCheck() == B_OK) {
+        results << "Files in /packages:\n";
+        BEntry entry;
+        while (packagesDirectory.GetNextEntry(&entry) == B_OK) {
+            BPath path;
+            entry.GetPath(&path);
+            results << "  - " << path.Path() << "\n";
+        }
+    } else {
+        results << "  (Directory '/packages' not found)\n";
+    }
 
     // Check for loaded drivers
     results << "\nLoaded Drivers:\n";
@@ -120,10 +132,57 @@ void MainWindow::_PerformSystemScan()
         _ScanDriverDirectory(dirPath, results);
     }
 
-    // Update results in the text view
+    // Check the '/boot/home/config' directory and look for "settings"
+    BDirectory configDirectory("/boot/home/config");
+    if (configDirectory.InitCheck() == B_OK) {
+        results << "\nFiles in /boot/home/config:\n";
+        BEntry entry;
+        bool settingsFound = false;
+        while (configDirectory.GetNextEntry(&entry) == B_OK) {
+            BPath path;
+            entry.GetPath(&path);
+
+            // Check if the directory ends with 'settings'
+            if (path.Leaf() == "settings") {
+                settingsFound = true;
+            }
+            results << "  - " << path.Path() << "\n";
+        }
+        if (!settingsFound) {
+            results << "  (Directory '/boot/home/config' does not contain 'settings')\n";
+        }
+    } else {
+        results << "  (Directory '/boot/home/config' not found)\n";
+    }
+
+    // Check the '/boot/home/Desktop' directory and subdirectories for files without extensions
+    BDirectory desktopDirectory("/boot/home/Desktop");
+    if (desktopDirectory.InitCheck() == B_OK) {
+        results << "\nApplications on Desktop without extensions:\n";
+        _CheckDesktopSubfoldersForNoExtension("/boot/home/Desktop", results);
+    } else {
+        results << "  (Directory '/boot/home/Desktop' not found)\n";
+    }
+
+    // Get installed packages via "pkgman list"
+    results << "\nInstalled Packages:\n";
+    FILE* pkgmanOutput = popen("pkgman list", "r");
+    if (pkgmanOutput) {
+        char buffer[1024]; // Use a larger buffer for efficiency
+        while (fgets(buffer, sizeof(buffer), pkgmanOutput)) {
+            results << buffer;
+        }
+        pclose(pkgmanOutput);
+    } else {
+        results << "  (Failed to retrieve installed packages)\n";
+    }
+
+    results << "\nScan completed.\n";
+
+    // Update the BTextView with the scan results
     fResultsView->SetText(results);
 
-    // Save results to a log file
+    // Save to a log file
     _SaveLogFile(results);
 }
 
