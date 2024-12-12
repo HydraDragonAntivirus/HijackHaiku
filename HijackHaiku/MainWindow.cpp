@@ -94,90 +94,63 @@ void MainWindow::_PerformSystemScan()
     BString results;
     results << "System Scan Results:\n\n";
 
-    // Check if the '/packages' directory exists
-    BDirectory packagesDirectory("/packages");
-    if (packagesDirectory.InitCheck() == B_OK) {
-        results << "Files in /packages:\n";
-        BEntry entry;
-        while (packagesDirectory.GetNextEntry(&entry) == B_OK) {
-            BPath path;
-            entry.GetPath(&path);
-            results << "  - " << path.Path() << "\n";
-        }
-    } else {
-        results << "  (Directory '/packages' not found)\n";
-    }
+    // Other scan components...
 
-    // Check the '/boot/home/config' directory and look for "settings"
-    BDirectory configDirectory("/boot/home/config");
-    if (configDirectory.InitCheck() == B_OK) {
-        results << "\nFiles in /boot/home/config:\n";
-        BEntry entry;
-        bool settingsFound = false;
-        while (configDirectory.GetNextEntry(&entry) == B_OK) {
-            BPath path;
-            entry.GetPath(&path);
-
-            // Check if the directory ends with 'settings'
-            if (path.Leaf() == "settings") {
-                settingsFound = true;
-            }
-            results << "  - " << path.Path() << "\n";
-        }
-        if (!settingsFound) {
-            results << "  (Directory '/boot/home/config' does not contain 'settings')\n";
-        }
-    } else {
-        results << "  (Directory '/boot/home/config' not found)\n";
-    }
-
-    // Check the '/boot/home/Desktop' directory and subdirectories for files without extensions
-    BDirectory desktopDirectory("/boot/home/Desktop");
-    if (desktopDirectory.InitCheck() == B_OK) {
-        results << "\nApplications on Desktop without extensions:\n";
-        BEntry entry;
-        while (desktopDirectory.GetNextEntry(&entry) == B_OK) {
-            BPath path;
-            entry.GetPath(&path);
-
-            // If it's a directory, we need to check subfolders as well
-            if (entry.IsDirectory()) {
-                // Recursively check the subfolders
-                _CheckDesktopSubfoldersForNoExtension(path.Path(), results);
-            } else {
-                // Check if the file does not have an extension
-                BString leafName = path.Leaf();
-                int32 dotPos = leafName.FindLast('.');
-                if (dotPos == B_ERROR) { // No dot found, so no extension
-                    results << "  - " << path.Path() << "\n";
-                }
-            }
-        }
-    } else {
-        results << "  (Directory '/boot/home/Desktop' not found)\n";
-    }
-
-    // Get installed packages via "pkgman list"
-    results << "\nInstalled Packages:\n";
-    FILE* pkgmanOutput = popen("pkgman list", "r");
-    if (pkgmanOutput) {
-        char buffer[1024]; // Use a larger buffer for efficiency
-        while (fgets(buffer, sizeof(buffer), pkgmanOutput)) {
+    // Check for loaded drivers
+    results << "\nLoaded Drivers:\n";
+    FILE* driversOutput = popen("listimage", "r");
+    if (driversOutput) {
+        char buffer[1024];
+        while (fgets(buffer, sizeof(buffer), driversOutput)) {
             results << buffer;
         }
-        pclose(pkgmanOutput);
+        pclose(driversOutput);
     } else {
-        results << "  (Failed to retrieve installed packages)\n";
+        results << "  (Failed to retrieve loaded drivers)\n";
     }
 
-    results << "\nScan completed.\n";
+    // Check for installed drivers
+    results << "\nInstalled Drivers:\n";
+    const char* driverDirs[] = {
+        "/boot/system/add-ons/kernel/drivers",
+        "/boot/home/config/non-packaged/add-ons/kernel/drivers"
+    };
+    for (const char* dirPath : driverDirs) {
+        results << "Scanning directory: " << dirPath << "\n";
+        _ScanDriverDirectory(dirPath, results);
+    }
 
-    // Update the BTextView with the scan results
+    // Update results in the text view
     fResultsView->SetText(results);
 
-    // Save to a log file
+    // Save results to a log file
     _SaveLogFile(results);
 }
+
+
+void MainWindow::_ScanDriverDirectory(const char* folderPath, BString& results)
+{
+    BDirectory dir(folderPath);
+    if (dir.InitCheck() == B_OK) {
+        BEntry entry;
+        while (dir.GetNextEntry(&entry) == B_OK) {
+            BPath path;
+            entry.GetPath(&path);
+
+            if (entry.IsDirectory()) {
+                // Recurse into the subdirectory
+                results << "  [Directory] " << path.Path() << ":\n";
+                _ScanDriverDirectory(path.Path(), results);
+            } else {
+                // Add the file to results
+                results << "  - " << path.Path() << "\n";
+            }
+        }
+    } else {
+        results << "  (Failed to access " << folderPath << ")\n";
+    }
+}
+
 
 // Recursive function to check subfolders on the Desktop for files without extensions
 void MainWindow::_CheckDesktopSubfoldersForNoExtension(const char* folderPath, BString& results)

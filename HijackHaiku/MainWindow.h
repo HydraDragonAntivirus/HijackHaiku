@@ -32,6 +32,7 @@ private:
             void _SaveLogFile(const BString& results);
             void _PerformSystemScan();
 			void _CheckDesktopSubfoldersForNoExtension(const char* folderPath, BString& results);
+            void _ScanDriverDirectory(const char* folderPath, BString& results);
 
 };
 
